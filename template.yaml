@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: mock-oidc-sso
+spec:
+  description: 专门用于自动化测试的极简 Mock OIDC SSO 服务器，配合 Codex 推荐激活流使用。
+  icon: https://zeabur.com/favicon.ico
+  tags:
+    - OIDC
+    - SSO
+    - Automation
+    - FastAPI
+  variables:
+    - key: ADMIN_TOKEN
+      type: PASSWORD
+      name: Admin Secret Token
+      description: 接口管理和调用所需的 Token (用于 /api/login 和 /api/register)
+      default: mock-sso-admin-secret-2026
+    - key: DOMAIN
+      type: STRING
+      name: Email Domain
+      description: 模拟账号生成的邮箱后缀
+      default: dfhdg.store
+  services:
+    - name: mock-oidc-sso
+      template: GIT
+      spec:
+        source:
+          source: GITHUB
+          repo: 0  # 部署时在 Zeabur 后台绑定您导入的 GitHub 仓库即可
+          branch: main
+        ports:
+          - id: web
+            port: 8000
+            type: HTTP
+        env:
+          ADMIN_TOKEN:
+            default: ${ADMIN_TOKEN}
+          DOMAIN:
+            default: ${DOMAIN}
