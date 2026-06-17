@@ -37,9 +37,9 @@ logger = logging.getLogger("MockSSO")
 parser = argparse.ArgumentParser(description="Mock OIDC SSO Server for Codex Automation")
 parser.add_argument("--host", default="0.0.0.0", help="监听 IP (默认: 0.0.0.0)")
 parser.add_argument("--port", type=int, default=8000, help="监听端口 (默认: 8000)")
-parser.add_argument("--domain", default="dfhdg.store", help="子/母账号生成的邮箱域名后缀 (默认: dfhdg.store)")
-parser.add_argument("--admin-token", default="mock-sso-admin-secret-2026", help="调用管理/注册接口所需的 Bearer Token")
-parser.add_argument("--issuer-url", default="", help="自定义外部 Issuer URL。如果不设置，将根据请求地址动态生成")
+parser.add_argument("--domain", default=os.getenv("DOMAIN", "dfhdg.store"), help="子/母账号生成的邮箱域名后缀")
+parser.add_argument("--admin-token", default=os.getenv("ADMIN_TOKEN", "mock-sso-admin-secret-2026"), help="调用管理/注册接口所需的 Bearer Token")
+parser.add_argument("--issuer-url", default=os.getenv("ISSUER_URL", ""), help="自定义外部 Issuer URL。如果不设置，将根据请求地址动态生成")
 args, _ = parser.parse_known_args()
 
 # ── 全局核心组件初始化 ──────────────────────────────────────────────
