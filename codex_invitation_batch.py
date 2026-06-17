@@ -56,6 +56,7 @@ def process_account(
     proxy: str = None,
     dry_run: bool = False,
     save_back: bool = False,
+    barrier = None,
 ) -> dict:
     """处理单个母号的邀请任务"""
     result = {
@@ -80,6 +81,11 @@ def process_account(
     if remaining is not None:
         if remaining <= 0:
             result["error"] = f"额度已用完 (剩余: {remaining})"
+            # 如果额度用完了，或者出错了，这个线程不需要参与后面的齐步走发送
+            # 但我们需要让 Barrier 知道，否则会导致其他正常线程永远等不够人数而锁死。
+            # 所以我们用 try-except 让 Barrier 减去本线程的期待数量，或者我们在异常时也要汇报
+            if barrier is not None:
+                barrier.abort()
             return result
         count = min(per_account, remaining)
     else:
@@ -92,7 +98,19 @@ def process_account(
         result["success"] = True
         result["error"] = "dry-run"
         result["sent_count"] = len(emails)
+        if barrier is not None:
+            barrier.abort()
         return result
+
+    # ── 齐步走同步屏障 (加一道坎) ──
+    if barrier is not None:
+        try:
+            # 报告已就绪
+            print(f"[{auth_path.name}] 准备就绪，等待其他母号共同发送...", flush=True)
+            barrier.wait(timeout=30)
+        except Exception:
+            # 捕获 BrokenBarrierError 等，确保即使超时也不影响主线程
+            pass
 
     try:
         resp = session.post(
@@ -176,10 +194,13 @@ def main() -> int:
     total_emails = 0
     success_accounts = 0
 
+    import threading
     max_workers = min(args.concurrency, len(auth_files))
+    barrier = threading.Barrier(max_workers)
+    
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(process_account, fp, args.domain, args.per_account, args.proxy, args.dry_run, args.save_back): fp
+            pool.submit(process_account, fp, args.domain, args.per_account, args.proxy, args.dry_run, args.save_back, barrier): fp
             for fp in auth_files
         }
         for future in as_completed(futures):
