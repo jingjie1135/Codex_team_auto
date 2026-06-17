@@ -23,7 +23,7 @@ import argparse
 import logging
 from typing import Dict, Optional
 from fastapi import FastAPI, Request, HTTPException, Depends, Form
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -121,6 +121,202 @@ def verify_admin_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     if credentials.credentials != args.admin_token:
         raise HTTPException(status_code=401, detail="Invalid admin token")
     return credentials.credentials
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    """精美的主页，用于直观验证 SSO 服务是否正常在线并展示元数据端点"""
+    base_url = args.issuer_url or str(request.base_url).rstrip("/")
+    return f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Mock OIDC SSO Server</title>
+        <style>
+            :root {{
+                --bg-color: #0b0f19;
+                --card-bg: #151d30;
+                --text-main: #f8fafc;
+                --text-muted: #94a3b8;
+                --primary: #38bdf8;
+                --primary-glow: rgba(56, 189, 248, 0.15);
+                --success: #10b981;
+                --border-color: #1e293b;
+            }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+                background-color: var(--bg-color);
+                color: var(--text-main);
+                margin: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+            }}
+            .card {{
+                background-color: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 16px;
+                padding: 40px;
+                max-width: 600px;
+                width: 90%;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+                text-align: center;
+                animation: fadeIn 0.6s ease-out;
+            }}
+            @keyframes fadeIn {{
+                from {{ opacity: 0; transform: translateY(10px); }}
+                to {{ opacity: 1; transform: translateY(0); }}
+            }}
+            .badge-container {{
+                display: flex;
+                justify-content: center;
+                gap: 10px;
+                margin-bottom: 20px;
+            }}
+            .badge {{
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 6px 14px;
+                border-radius: 30px;
+                border: 1px solid transparent;
+            }}
+            .badge-online {{
+                background-color: rgba(16, 185, 129, 0.1);
+                color: var(--success);
+                border-color: rgba(16, 185, 129, 0.2);
+            }}
+            .badge-online .dot {{
+                width: 8px;
+                height: 8px;
+                background-color: var(--success);
+                border-radius: 50%;
+                box-shadow: 0 0 8px var(--success);
+                animation: pulse 2s infinite;
+            }}
+            @keyframes pulse {{
+                0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }}
+                70% {{ transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }}
+                100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
+            }}
+            .badge-domain {{
+                background-color: rgba(56, 189, 248, 0.1);
+                color: var(--primary);
+                border-color: rgba(56, 189, 248, 0.2);
+            }}
+            h1 {{
+                font-size: 28px;
+                margin: 0 0 10px 0;
+                background: linear-gradient(135deg, #f8fafc 0%, #94a3b8 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            p {{
+                color: var(--text-muted);
+                line-height: 1.6;
+                margin: 0 0 30px 0;
+                font-size: 15px;
+            }}
+            .endpoints-title {{
+                text-align: left;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-muted);
+                margin-bottom: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }}
+            .endpoint-row {{
+                background-color: rgba(11, 15, 25, 0.5);
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin-bottom: 12px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 15px;
+            }}
+            .endpoint-row:hover {{
+                border-color: rgba(56, 189, 248, 0.4);
+                box-shadow: 0 0 10px var(--primary-glow);
+                transition: all 0.3s ease;
+            }}
+            .endpoint-path {{
+                font-family: 'Fira Code', 'Courier New', Courier, monospace;
+                font-size: 13px;
+                color: var(--primary);
+                word-break: break-all;
+                text-align: left;
+            }}
+            .copy-btn {{
+                background: none;
+                border: 1px solid var(--border-color);
+                color: var(--text-muted);
+                cursor: pointer;
+                padding: 6px 12px;
+                font-size: 12px;
+                border-radius: 6px;
+                white-space: nowrap;
+                transition: all 0.2s;
+            }}
+            .copy-btn:hover {{
+                background-color: var(--primary);
+                color: var(--bg-color);
+                border-color: var(--primary);
+            }}
+        </style>
+        <script>
+            function copyText(text, btnId) {{
+                navigator.clipboard.writeText(text).then(() => {{
+                    const btn = document.getElementById(btnId);
+                    const originalText = btn.innerText;
+                    btn.innerText = "已复制 ✓";
+                    btn.style.backgroundColor = "var(--success)";
+                    btn.style.borderColor = "var(--success)";
+                    btn.style.color = "#ffffff";
+                    setTimeout(() => {{
+                        btn.innerText = originalText;
+                        btn.style.backgroundColor = "";
+                        btn.style.borderColor = "";
+                        btn.style.color = "";
+                    }}, 1500);
+                }});
+            }}
+        </script>
+    </head>
+    <body>
+        <div class="card">
+            <div class="badge-container">
+                <span class="badge badge-online">
+                    <span class="dot"></span> Running
+                </span>
+                <span class="badge badge-domain">
+                    @{args.domain}
+                </span>
+            </div>
+            <h1>Mock OIDC SSO Server</h1>
+            <p>专门为 OpenAI/Codex 自动化集成测试量身定制的单点登录服务已成功在云端部署运行！</p>
+            
+            <div class="endpoints-title">OIDC 集成核心端点</div>
+            
+            <div class="endpoint-row">
+                <span class="endpoint-path">{base_url}/.well-known/openid-configuration</span>
+                <button id="btn-discovery" class="copy-btn" onclick="copyText('{base_url}/.well-known/openid-configuration', 'btn-discovery')">复制发现链接</button>
+            </div>
+            
+            <div class="endpoint-row">
+                <span class="endpoint-path">{base_url}/jwks.json</span>
+                <button id="btn-jwks" class="copy-btn" onclick="copyText('{base_url}/jwks.json', 'btn-jwks')">复制公钥链接</button>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
 # ── OIDC 发现与 JWKS 端点 ──────────────────────────────────────────
 @app.get("/.well-known/openid-configuration")
