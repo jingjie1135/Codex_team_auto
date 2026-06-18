@@ -78,6 +78,29 @@ python codex_referral_flow.py `
 python codex_referral_flow.py --auto-seeds 10 --seeds-invite-code JOIN-2026 --domain your-domain.com --per-account 5 --concurrency 10 --oidc-sso-url https://your-sso.example.com --oidc-sso-admin-token YOUR_ADMIN_TOKEN --oidc-sso-invite-code JOIN-2026
 ```
 
+### 新用戶第一次該怎麼跑（推薦範本）
+
+新用戶建議用「獨立輸出目錄 + 全程日誌落檔」的方式執行，這樣產物不會互相覆蓋，中斷後也能對照日誌接續。PowerShell：
+
+```powershell
+cd C:\Projects\codex-referral-risk-research
+
+# 用帶時間戳的獨立目錄，避免覆蓋舊產物
+$ts = Get-Date -Format yyyyMMdd_HHmmss
+$out = "runs\$ts"
+
+python codex_referral_flow.py --auto-seeds 10 --seeds-invite-code JOIN-2026 --domain your-domain.com --per-account 5 --concurrency 10 --oidc-sso-url https://your-sso.example.com --oidc-sso-admin-token YOUR_ADMIN_TOKEN --oidc-sso-invite-code JOIN-2026 --proxy http://127.0.0.1:7890 --out-dir $out 2>&1 | Tee-Object -FilePath "$out\run.log"
+```
+
+說明：
+
+- `--out-dir $out`：所有產物（憑證、邀請結果、子號清單）落在這個獨立目錄，下次重跑不會覆蓋。
+- `--proxy http://127.0.0.1:7890`：本程式所有網絡操作都走 HTTP 代理（無驗證）；代理沒開會導致全部請求失敗。
+- `Tee-Object`：把完整執行過程同時印到螢幕並寫入 `$out\run.log`，中斷後可查到斷在哪一步。
+- `$out` 是 PowerShell 變數，只在**同一個視窗**有效；換視窗請把 `$out` 改成實際路徑字串（例如 `runs\20260618_103000`）。
+
+> 注意：`Tee-Object` 要等程式結束才會寫完整 log。若中途強制關閉視窗，log 可能不完整，但 `$out` 下的產物檔（憑證、邀請結果）仍會逐步落檔保留。
+
 ## 流程步驟說明
 
 | 步驟 | 說明 | 對應腳本 |
@@ -215,6 +238,57 @@ python codex_protocol_login.py \
   --oidc-sso-invite-code JOIN-2026
 ```
 
+## 中斷後如何續跑（防止流程斷掉無法繼續）
+
+全流程分四步，每步完成的產物都會落在 `--out-dir` 目錄。如果中途斷掉（網絡、代理、Ctrl+C 等），**不需要從頭重來**，用同一個 `--out-dir` 加上對應的 `--skip-*` 跳過已完成的步驟即可接續。
+
+判斷斷在哪一步，看 `--out-dir` 下已經產生了哪些檔：
+
+| 已存在的產物 | 代表已完成 | 續跑時加的參數 |
+|------|------|------|
+| `auto_seeds.json` | 步驟 0 建母號 | `--use-existing-seeds` |
+| `seeds/*.json` | 步驟 1 母號登入 | `--skip-seeds-login` |
+| `invite_results.json` | 步驟 2 發送邀請 | `--skip-invitations` |
+| `invitees/*.json` | 步驟 3 子號登入 | （激活前已完成，可直接補激活）|
+
+> 續跑一定要帶上原本那次的 `--out-dir`，否則讀不到先前的產物。PowerShell 同一視窗可直接用 `$out` 變數；換了視窗請填實際路徑字串。
+
+### 續跑情境 A：斷在母號登入後（已有 `auto_seeds.json` + `seeds/`）
+
+跳過建號，從母號登入往後接續：
+
+```powershell
+python codex_referral_flow.py --use-existing-seeds --seeds-invite-code JOIN-2026 --domain your-domain.com --per-account 5 --concurrency 10 --oidc-sso-url https://your-sso.example.com --oidc-sso-admin-token YOUR_ADMIN_TOKEN --oidc-sso-invite-code JOIN-2026 --proxy http://127.0.0.1:7890 --out-dir $out --skip-seeds-login 2>&1 | Tee-Object -FilePath "$out\run_resume.log" -Append
+```
+
+### 續跑情境 B：邀請已發出（已有 `invite_results.json`）
+
+只補「子號登入 + 激活」，不重發邀請：
+
+```powershell
+python codex_referral_flow.py --use-existing-seeds --domain your-domain.com --concurrency 10 --oidc-sso-url https://your-sso.example.com --oidc-sso-admin-token YOUR_ADMIN_TOKEN --oidc-sso-invite-code JOIN-2026 --proxy http://127.0.0.1:7890 --out-dir $out --skip-seeds-login --skip-invitations 2>&1 | Tee-Object -FilePath "$out\run_resume.log" -Append
+```
+
+### 續跑情境 C：只剩激活（子號 token 已在 `invitees/`）
+
+直接單獨跑激活腳本，最省事：
+
+```powershell
+python codex_activation_batch.py --auth-dir $out\invitees --concurrency 10 --save-back --proxy http://127.0.0.1:7890 2>&1 | Tee-Object -FilePath "$out\run_activate.log" -Append
+```
+
+### 已建好的子號要重新登入 + 激活
+
+如果子號已經在 OpenAI / SSO 系統建好了（例如先前因 bug 中斷），只需重新拿 token 再激活，**登入時不要帶 `--oidc-sso-invite-code`**，這樣會走 `/api/login`（登入既有帳號），而不是 `/api/register`（重複註冊會失敗）：
+
+```powershell
+# 第 1 步：重新登入拿 token（走 /api/login）
+python codex_protocol_login.py --json $out\invitees.txt --out-dir $out\invitees --concurrency 10 --oidc-sso-url https://your-sso.example.com --oidc-sso-admin-token YOUR_ADMIN_TOKEN --proxy http://127.0.0.1:7890
+
+# 第 2 步：激活
+python codex_activation_batch.py --auth-dir $out\invitees --concurrency 10 --save-back --proxy http://127.0.0.1:7890
+```
+
 ## 輸入文件格式
 
 ### JSON 格式（推薦）
@@ -303,6 +377,18 @@ runs/auto/
 ### Q: SSO 系統需要怎麼配置？
 
 你的 SSO 系統需要是 OIDC 提供者，並在 OpenAI 後台配置為 Custom OIDC。SSO 的 `ACCOUNT_DOMAIN` 必須與 `--domain` 參數一致。
+
+### Q: 流程跑到一半中斷了，要從頭重來嗎？
+
+不用。每一步的產物都落在 `--out-dir` 目錄。看目錄下已經有哪些檔，判斷斷在哪一步，再用同一個 `--out-dir` 加對應的 `--skip-*` 接續即可。詳見〈中斷後如何續跑〉章節。
+
+### Q: 怎麼保留完整的執行記錄？
+
+程式本身只把日誌印到螢幕，不自動寫檔。執行時在命令尾端加 `2>&1 | Tee-Object -FilePath "$out\run.log"`（PowerShell），即可同時顯示在螢幕並寫入 log 檔，方便中斷後排查斷點。
+
+### Q: 子號已經建好了，重跑卻一直登入失敗？
+
+已存在的帳號要走 `/api/login`，不能再走 `/api/register`。重新登入時**移除 `--oidc-sso-invite-code` 參數**即可（有邀請碼才走註冊）。詳見〈已建好的子號要重新登入 + 激活〉。
 
 ## 各腳本說明
 
