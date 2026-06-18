@@ -1293,9 +1293,15 @@ def login_and_save(
     proxy: str = None,
     oidc_sso_url: str = "",
     oidc_sso_admin_token: str = "",
+    oidc_sso_invite_code: str = "",
 ) -> bool:
     try:
-        client = CodexLogin(proxy=proxy, oidc_sso_url=oidc_sso_url, oidc_sso_admin_token=oidc_sso_admin_token)
+        client = CodexLogin(
+            proxy=proxy,
+            oidc_sso_url=oidc_sso_url,
+            oidc_sso_admin_token=oidc_sso_admin_token,
+            oidc_sso_invite_code=oidc_sso_invite_code,
+        )
         auth_data, logged_email = client.login(email, password)
         atomic_write_json(out_path, auth_data)
         tokens = auth_data["tokens"]
@@ -1330,7 +1336,7 @@ def login_batch_job(
     attempts = retries + 1
     for attempt in range(1, attempts + 1):
         logger.info(f"[{index}/{total}] {email} (尝试 {attempt}/{attempts})")
-        if login_and_save(email, password, out_path, proxy, oidc_sso_url, oidc_sso_admin_token):
+        if login_and_save(email, password, out_path, proxy, oidc_sso_url, oidc_sso_admin_token, oidc_sso_invite_code):
             return {"email": email, "out_path": str(out_path), "status": "success", "success": True}
         if attempt < attempts:
             time.sleep(min(5, attempt * 2))
@@ -1347,7 +1353,7 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--out", help="单账号输出路径")
     group.add_argument("--out-dir", help="批量输出目录")
-    parser.add_argument("--proxy", help="代理 URL")
+    parser.add_argument("--proxy", default="http://127.0.0.1:7890", help="代理 URL [默認: http://127.0.0.1:7890]")
     parser.add_argument("--concurrency", type=int, default=1, help="CSV 批量登录并发数 [默认: 1]")
     parser.add_argument("--retries", type=int, default=2, help="CSV 批量登录失败重试次数 [默认: 2]")
     parser.add_argument("--skip-existing", action="store_true", help="CSV 批量登录时跳过已存在的输出 JSON")
