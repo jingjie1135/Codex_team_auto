@@ -3,7 +3,7 @@
 """
 Codex 批量并行邀请调度器
 ========================
-扫描一个目录下所有母号 auth.json，每个母号邀请 5 个邮箱，并发执行。
+扫描一个目录下所有母号 auth.json，先准备所有母号的邀请邮箱，再统一发起邀请请求。
 
 用法：
   python codex_invitation_batch.py --auth-dir ./accounts --domain dfhdg.store --per-account 5
@@ -15,15 +15,19 @@ Codex 批量并行邀请调度器
   python codex_invitation_batch.py --auth-dir ./accounts --dry-run
 """
 
-import os
+from __future__ import annotations
+
 import sys
 import json
 import time
 import argparse
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sys.stdout.reconfigure(encoding="utf-8")
+import requests
+
+from codex_invitation_types import InviteResult, PreparedInviteResult, public_result
 
 # 导入邀请脚本的核心函数
 from codex_invitation_helper import (
@@ -49,24 +53,25 @@ def is_auth_json_file(path: Path) -> bool:
     return isinstance(tokens, dict) and bool(tokens.get("access_token") or tokens.get("refresh_token"))
 
 
-def process_account(
+def prepare_account(
     auth_path: Path,
     domain: str,
     per_account: int,
-    proxy: str = None,
+    proxy: str | None = None,
     dry_run: bool = False,
     save_back: bool = False,
-    barrier = None,
-) -> dict:
-    """处理单个母号的邀请任务"""
-    result = {
+) -> PreparedInviteResult:
+    """读取母号凭证并生成待发送邀请清单。"""
+    result: PreparedInviteResult = {
         "auth_file": str(auth_path),
         "success": False,
         "emails": [],
         "invites": [],
         "sent_count": 0,
         "partial": False,
-        "error": None,
+        "error": "",
+        "access_token": "",
+        "account_id": "",
     }
 
     try:
@@ -75,76 +80,87 @@ def process_account(
         result["error"] = "凭证加载失败"
         return result
 
-    session_type, session = build_session(proxy)
-    remaining = check_eligibility(session, access_token, account_id)
+    _, session = build_session(proxy)
+    try:
+        remaining = check_eligibility(session, access_token, account_id)
+    finally:
+        session.close()
 
     if remaining is not None:
         if remaining <= 0:
             result["error"] = f"额度已用完 (剩余: {remaining})"
-            # 如果额度用完了，或者出错了，这个线程不需要参与后面的齐步走发送
-            # 但我们需要让 Barrier 知道，否则会导致其他正常线程永远等不够人数而锁死。
-            # 所以我们用 try-except 让 Barrier 减去本线程的期待数量，或者我们在异常时也要汇报
-            if barrier is not None:
-                barrier.abort()
             return result
         count = min(per_account, remaining)
     else:
         count = per_account
 
+    result["access_token"] = access_token
+    result["account_id"] = account_id
     emails = [random_email(domain) for _ in range(count)]
     result["emails"] = emails
-
+    result["success"] = True
     if dry_run:
-        result["success"] = True
         result["error"] = "dry-run"
         result["sent_count"] = len(emails)
-        if barrier is not None:
-            barrier.abort()
-        return result
+    return result
 
-    # ── 齐步走同步屏障 (加一道坎) ──
+
+def send_account_invites(
+    prepared: PreparedInviteResult,
+    proxy: str | None = None,
+    barrier: threading.Barrier | None = None,
+) -> InviteResult:
+    """在统一起点发送单个母号的邀请请求。"""
     if barrier is not None:
-        try:
-            # 报告已就绪
-            print(f"[{auth_path.name}] 准备就绪，等待其他母号共同发送...", flush=True)
-            barrier.wait(timeout=30)
-        except Exception:
-            # 捕获 BrokenBarrierError 等，确保即使超时也不影响主线程
-            pass
+        print(f"[{Path(prepared['auth_file']).name}] 准备就绪，等待其他母号共同发送...", flush=True)
+        barrier.wait(timeout=30)
 
+    result: InviteResult = public_result(prepared)
+    access_token = prepared["access_token"]
+    account_id = prepared["account_id"]
+
+    session = None
     try:
+        _, session = build_session(proxy)
         resp = session.post(
             INVITE_URL,
             headers=get_headers(access_token, account_id, is_json=True),
-            json={"referral_key": REFERRAL_KEY, "emails": emails},
+            json={"referral_key": REFERRAL_KEY, "emails": prepared["emails"]},
             timeout=30,
             verify=False,
         )
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-            except Exception as e:
-                result["error"] = f"HTTP 200 但响应不是 JSON: {e}"
-                return result
-
-            invites = data.get("invites", [])
-            if not isinstance(invites, list):
-                result["error"] = f"HTTP 200 但响应缺少 invites 列表: {str(data)[:200]}"
-                return result
-
-            result["invites"] = invites
-            result["sent_count"] = len(invites)
-            result["partial"] = len(invites) != len(emails)
-            if invites:
-                result["success"] = True
-            else:
-                result["error"] = f"HTTP 200 但 invites 为空，请求邮箱数 {len(emails)}"
-        else:
+        if resp.status_code != 200:
             result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-    except Exception as e:
-        result["error"] = str(e)
+            result["success"] = False
+            return result
 
-    return result
+        try:
+            data = resp.json()
+        except ValueError as e:
+            result["error"] = f"HTTP 200 但响应不是 JSON: {e}"
+            result["success"] = False
+            return result
+
+        invites = data.get("invites", [])
+        if not isinstance(invites, list):
+            result["error"] = f"HTTP 200 但响应缺少 invites 列表: {str(data)[:200]}"
+            result["success"] = False
+            return result
+
+        result["invites"] = invites
+        result["sent_count"] = len(invites)
+        result["partial"] = len(invites) != len(prepared["emails"])
+        result["success"] = bool(invites)
+        if not invites:
+            result["error"] = f"HTTP 200 但 invites 为空，请求邮箱数 {len(prepared['emails'])}"
+        return result
+    except requests.RequestException as e:
+        result["error"] = str(e)
+        result["success"] = False
+        return result
+    finally:
+        if session is not None:
+            session.close()
 
 
 def main() -> int:
@@ -190,42 +206,70 @@ def main() -> int:
     if args.dry_run:
         log("dry-run 模式，不会实际发送邀请")
 
-    results = []
-    total_emails = 0
-    success_accounts = 0
+    prepare_results: list[PreparedInviteResult] = []
+    prepare_failures: list[InviteResult] = []
 
-    import threading
     max_workers = min(args.concurrency, len(auth_files))
-    barrier = threading.Barrier(max_workers)
-    
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(process_account, fp, args.domain, args.per_account, args.proxy, args.dry_run, args.save_back, barrier): fp
+            pool.submit(prepare_account, fp, args.domain, args.per_account, args.proxy, args.dry_run, args.save_back): fp
             for fp in auth_files
         }
         for future in as_completed(futures):
             fp = futures[future]
             try:
-                r = future.result()
+                prepared = future.result()
             except Exception as e:
-                r = {"auth_file": str(fp), "success": False, "error": str(e), "emails": []}
-
-            results.append(r)
-            account_id = fp.stem
-
-            if r["success"]:
-                success_accounts += 1
-                sent_count = int(r.get("sent_count", len(r["emails"])))
-                total_emails += sent_count
-                if args.dry_run:
-                    label = "dry-run"
-                elif r.get("partial"):
-                    label = f"{sent_count}/{len(r['emails'])} 条邀请，部分成功"
-                else:
-                    label = f"{sent_count} 条邀请"
-                log(f"✓ {account_id}: {len(r['emails'])} 个邮箱 ({label})", "✓")
+                failure: InviteResult = {"auth_file": str(fp), "success": False, "emails": [], "invites": [], "sent_count": 0, "partial": False, "error": str(e)}
+                prepare_failures.append(failure)
             else:
-                log(f"✗ {account_id}: {r.get('error', '未知错误')}", "!")
+                if prepared["success"]:
+                    prepare_results.append(prepared)
+                else:
+                    prepare_failures.append(public_result(prepared))
+
+    results: list[InviteResult] = []
+    if args.dry_run:
+        results = [public_result(r) for r in prepare_results] + prepare_failures
+    elif prepare_results:
+        log(f"所有可用母号已准备完成，统一发起 {len(prepare_results)} 个邀请请求", "→")
+        barrier = threading.Barrier(len(prepare_results))
+        with ThreadPoolExecutor(max_workers=len(prepare_results)) as pool:
+            futures = {
+                pool.submit(send_account_invites, r, args.proxy, barrier): r
+                for r in prepare_results
+            }
+            for future in as_completed(futures):
+                prepared = futures[future]
+                try:
+                    r = future.result()
+                except Exception as e:
+                    r = public_result(prepared)
+                    r["success"] = False
+                    r["error"] = str(e)
+                results.append(r)
+    else:
+        results = []
+
+    results = prepare_failures + results
+
+    total_emails = 0
+    success_accounts = 0
+    for r in results:
+        account_id = Path(r["auth_file"]).stem
+        if r["success"]:
+            success_accounts += 1
+            sent_count = int(r.get("sent_count", len(r["emails"])))
+            total_emails += sent_count
+            if args.dry_run:
+                label = "dry-run"
+            elif r.get("partial"):
+                label = f"{sent_count}/{len(r['emails'])} 条邀请，部分成功"
+            else:
+                label = f"{sent_count} 条邀请"
+            log(f"✓ {account_id}: {len(r['emails'])} 个邮箱 ({label})", "✓")
+        else:
+            log(f"✗ {account_id}: {r.get('error', '未知错误')}", "!")
 
     print("\n" + "=" * 60)
     print(f"邀请汇总: {success_accounts}/{len(auth_files)} 个母号成功，共 {total_emails} 个邮箱")
