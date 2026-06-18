@@ -294,7 +294,7 @@ def main() -> int:
             "--oidc-sso-url", args.oidc_sso_url,
             "--oidc-sso-admin-token", args.oidc_sso_admin_token,
         ]
-        if args.proxy:
+        if args.proxy is not None:
             cmd.extend(["--proxy", args.proxy])
 
         if not run_command(cmd, "母號登入"):
@@ -326,7 +326,7 @@ def main() -> int:
             "--out", str(invite_results),
             "--save-back",
         ]
-        if args.proxy:
+        if args.proxy is not None:
             cmd.extend(["--proxy", args.proxy])
         if args.dry_run:
             cmd.append("--dry-run")
@@ -359,7 +359,7 @@ def main() -> int:
             "--oidc-sso-admin-token", args.oidc_sso_admin_token,
             "--oidc-sso-invite-code", args.oidc_sso_invite_code,
         ]
-        if args.proxy:
+        if args.proxy is not None:
             cmd.extend(["--proxy", args.proxy])
 
         if not run_command(cmd, "子號登入"):
@@ -380,7 +380,7 @@ def main() -> int:
                 "--concurrency", str(args.concurrency),
                 "--save-back",
             ]
-            if args.proxy:
+            if args.proxy is not None:
                 cmd.extend(["--proxy", args.proxy])
 
             if not run_command(cmd, "子號激活"):
