@@ -375,8 +375,24 @@ def generate_redirect_response(payload: dict, code_type: str) -> dict:
 
 @app.post("/api/register")
 def api_register(payload: dict, token: str = Depends(verify_admin_token)):
-    """注册并登录子号"""
-    logger.info(f"收到子号注册请求: 账号前缀={payload.get('account')}, 邀请码={payload.get('invite_code')}")
+    """注册子号 (兼容后台纯创建与OAuth登录流)"""
+    account = payload.get("account")
+    invite_code = payload.get("invite_code")
+    redirect_uri = payload.get("redirect_uri")
+    
+    logger.info(f"收到注册请求: 账号前缀={account}, 邀请码={invite_code}, 重定向={redirect_uri}")
+    
+    if not redirect_uri:
+        # 如果没有重定向地址，说明是脚本在后台自动建立账号 (例如 auto_create_seeds)
+        # 直接返回成功注册响应即可
+        return {
+            "user": {
+                "created": True,
+                "email": f"{account}@{args.domain}"
+            }
+        }
+        
+    # 如果有重定向地址，说明是子号在 OIDC 登录过程中触发自动注册，走 OAuth 码生成流
     return generate_redirect_response(payload, "register")
 
 @app.post("/api/login")
