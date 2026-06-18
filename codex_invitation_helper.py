@@ -43,7 +43,7 @@ except ImportError:
 # ── 协议常量 ──────────────────────────────────────────────────────────
 INVITE_URL = "https://chatgpt.com/backend-api/wham/referrals/invite"
 ELIGIBILITY_URL = "https://chatgpt.com/backend-api/wham/referrals/eligibility_rules"
-REFERRAL_KEY = "6a3348f0fba081918c922aab965f70b4"
+REFERRAL_KEY = "codex_referral_workspace_out_of_credits"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
