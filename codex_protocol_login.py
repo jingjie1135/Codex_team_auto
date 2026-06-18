@@ -1153,11 +1153,16 @@ class CodexLogin:
         page_type = extract_page_type(step_data)
         continue_url = normalize_continue_url(extract_continue_url(step_data))
 
-        if page_type == "login_password" or "/log-in/password" in (continue_url or ""):
+        sso_conn = extract_sso_connection(step_data)
+        if sso_conn and self._oidc_sso_url:
+            logger.info(f"[OIDC SSO] 检测到可用的单点登录(SSO)连接: {sso_conn.get('connection_name')}")
+            sso_data = self.do_sso_connection_continue(sso_conn)
+            continue_url = normalize_continue_url(extract_continue_url(sso_data))
+        elif page_type == "login_password" or "/log-in/password" in (continue_url or ""):
             login_data = self.login_password_verify(password)
             continue_url = normalize_continue_url(extract_continue_url(login_data))
         elif page_type == "sso":
-            sso_data = self.do_sso_connection_continue(extract_sso_connection(step_data))
+            sso_data = self.do_sso_connection_continue(sso_conn)
             continue_url = normalize_continue_url(extract_continue_url(sso_data))
         elif page_type == "email_otp_verification":
             raise RuntimeError(f"需要 OTP 验证码，协议模式不支持。邮箱: {email}")
@@ -1213,12 +1218,16 @@ class CodexLogin:
         page_type = extract_page_type(step_data)
         continue_url = normalize_continue_url(extract_continue_url(step_data))
 
-        if page_type == "login_password" or "/log-in/password" in (continue_url or ""):
+        sso_conn = extract_sso_connection(step_data)
+        if sso_conn and self._oidc_sso_url:
+            logger.info(f"[OIDC SSO] 检测到可用的单点登录(SSO)连接: {sso_conn.get('connection_name')}")
+            sso_data = self.do_sso_connection_continue(sso_conn)
+            continue_url = normalize_continue_url(extract_continue_url(sso_data))
+        elif page_type == "login_password" or "/log-in/password" in (continue_url or ""):
             login_data = self.login_password_verify(password)
             continue_url = normalize_continue_url(extract_continue_url(login_data))
         elif page_type == "sso":
-            connection = extract_sso_connection(step_data)
-            sso_data = self.do_sso_connection_continue(connection)
+            sso_data = self.do_sso_connection_continue(sso_conn)
             continue_url = normalize_continue_url(extract_continue_url(sso_data))
         elif page_type == "email_otp_verification":
             raise RuntimeError(f"需要 OTP 验证码，协议模式不支持。邮箱: {email}")
